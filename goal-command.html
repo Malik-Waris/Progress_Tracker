@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Goal Command — Progress Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100vh; transition: background .3s; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #888; border-radius: 2px; }
+
+    .theme-dark  {
+      --bg:#0A0A0A; --bg2:#111111; --bg3:#0E0E0E; --bg4:#1A1A1A; --bg5:#1E1E1E; --bg6:#2A2A2A;
+      --txt:#E0E0E0; --txt2:#888; --txt3:#555; --txt4:#444; --txt5:#333;
+      --border:#1E1E1E; --border2:#2A2A2A; --border3:#333;
+      --input-bg:#1A1A1A; --input-color:#E0E0E0; --opt-bg:#1A1A1A;
+      --modal-bg:#111; --modal-overlay:rgba(0,0,0,.88);
+      --shadow:rgba(0,0,0,.5); --time-marker:rgba(255,255,255,.22);
+    }
+    .theme-light {
+      --bg:#F2F0EB; --bg2:#FFFFFF; --bg3:#E8E6E1; --bg4:#DEDAD4; --bg5:#D0CEC9; --bg6:#C0BEB9;
+      --txt:#1A1A1A; --txt2:#555; --txt3:#777; --txt4:#999; --txt5:#BBB;
+      --border:#E0DDD7; --border2:#CCCAC5; --border3:#AEACAB;
+      --input-bg:#F9F8F5; --input-color:#1A1A1A; --opt-bg:#F9F8F5;
+      --modal-bg:#FFFFFF; --modal-overlay:rgba(0,0,0,.4);
+      --shadow:rgba(0,0,0,.1); --time-marker:rgba(0,0,0,.18);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const initialGoals = [
+      { id:1, name:"Read 30 books",   priority:"High",   timePitched:60, timeGiven:90,  tasksDone:12, totalTasks:30,  dailyQuota:1, todayDone:0, color:"#FF6B35" },
+      { id:2, name:"Learn Spanish",   priority:"Medium", timePitched:30, timeGiven:60,  tasksDone:45, totalTasks:100, dailyQuota:3, todayDone:0, color:"#0099BB" },
+      { id:3, name:"Run 5K daily",    priority:"High",   timePitched:14, timeGiven:30,  tasksDone:8,  totalTasks:30,  dailyQuota:1, todayDone:0, color:"#22AA44" },
+      { id:4, name:"Build Portfolio", priority:"Low",    timePitched:45, timeGiven:120, tasksDone:3,  totalTasks:20,  dailyQuota:1, todayDone:0, color:"#AA44CC" },
+    ];
+
+    const priorityRank   = { High:3, Medium:2, Low:1 };
+    const priorityColors = { High:"#FF6B35", Medium:"#E6A800", Low:"#0099BB" };
+    const ACCENT_PALETTE = ["#FF6B35","#0099BB","#22AA44","#AA44CC","#E6A800","#DD3333","#7755DD","#FF9F1C"];
+
+    function App() {
+      const [goals, setGoals]           = useState(() => { try { const s=localStorage.getItem("gc_goals"); return s?JSON.parse(s):initialGoals; } catch { return initialGoals; } });
+      const [dark,  setDark]            = useState(() => { try { return localStorage.getItem("gc_theme") !== "light"; } catch { return true; } });
+      const [showModal, setShowModal]   = useState(false);
+      const [editingGoal, setEditingGoal] = useState(null);
+      const [form, setForm]             = useState({ name:"", priority:"Medium", timePitched:"", timeGiven:"", totalTasks:"", dailyQuota:"", color:"#FF6B35" });
+      const [sortBy, setSortBy]         = useState("priority");
+      const [errors, setErrors]         = useState({});
+
+      useEffect(() => { try { localStorage.setItem("gc_goals", JSON.stringify(goals)); } catch {} }, [goals]);
+
+      useEffect(() => {
+        try { localStorage.setItem("gc_theme", dark?"dark":"light"); } catch {}
+        const cls = dark ? "theme-dark" : "theme-light";
+        document.body.className = cls;
+        document.body.style.background = dark ? "#0A0A0A" : "#F2F0EB";
+      }, [dark]);
+
+      // initial theme apply
+      useEffect(() => {
+        document.body.className = dark ? "theme-dark" : "theme-light";
+        document.body.style.background = dark ? "#0A0A0A" : "#F2F0EB";
+      }, []);
+
+      const now     = new Date();
+      const dateStr = now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+      const overallProgress = goals.length ? Math.round(goals.reduce((s,g)=>s+(g.tasksDone/g.totalTasks)*100,0)/goals.length) : 0;
+      const todayComplete   = goals.filter(g=>g.todayDone>=g.dailyQuota).length;
+
+      const sorted = [...goals].sort((a,b)=>{
+        if(sortBy==="priority") return priorityRank[b.priority]-priorityRank[a.priority];
+        if(sortBy==="progress") return (b.tasksDone/b.totalTasks)-(a.tasksDone/a.totalTasks);
+        if(sortBy==="deadline") return a.timeGiven-b.timeGiven;
+        return 0;
+      });
+
+      const validate = f => {
+        const e={};
+        if(!f.name.trim())                        e.name        ="Required";
+        if(!f.timePitched||+f.timePitched<=0)     e.timePitched ="Must be > 0";
+        if(!f.timeGiven  ||+f.timeGiven  <=0)     e.timeGiven   ="Must be > 0";
+        if(!f.totalTasks ||+f.totalTasks <=0)     e.totalTasks  ="Must be > 0";
+        if(!f.dailyQuota ||+f.dailyQuota <=0)     e.dailyQuota  ="Must be > 0";
+        return e;
+      };
+
+      const openAdd  = () => { setEditingGoal(null); setForm({name:"",priority:"Medium",timePitched:"",timeGiven:"",totalTasks:"",dailyQuota:"",color:"#FF6B35"}); setErrors({}); setShowModal(true); };
+      const openEdit = g  => { setEditingGoal(g.id); setForm({name:g.name,priority:g.priority,timePitched:g.timePitched,timeGiven:g.timeGiven,totalTasks:g.totalTasks,dailyQuota:g.dailyQuota,color:g.color}); setErrors({}); setShowModal(true); };
+
+      const saveGoal = () => {
+        const e=validate(form); if(Object.keys(e).length){setErrors(e);return;}
+        const base={...form,timePitched:+form.timePitched,timeGiven:+form.timeGiven,totalTasks:+form.totalTasks,dailyQuota:+form.dailyQuota};
+        if(editingGoal) setGoals(goals.map(g=>g.id===editingGoal?{...g,...base}:g));
+        else            setGoals([...goals,{id:Date.now(),...base,tasksDone:0,todayDone:0}]);
+        setShowModal(false);
+      };
+
+      const deleteGoal = id => { if(window.confirm("Delete this goal?")) setGoals(goals.filter(g=>g.id!==id)); };
+      const logTask    = id => setGoals(goals.map(g=>g.id===id&&g.tasksDone<g.totalTasks?{...g,tasksDone:g.tasksDone+1,todayDone:g.todayDone+1}:g));
+      const undoTask   = id => setGoals(goals.map(g=>g.id===id&&g.tasksDone>0?{...g,tasksDone:g.tasksDone-1,todayDone:Math.max(0,g.todayDone-1)}:g));
+      const resetToday = ()  => setGoals(goals.map(g=>({...g,todayDone:0})));
+
+      const timeRatio = g => Math.min(g.timePitched/g.timeGiven,1);
+      const getStatus = g => {
+        const p=g.tasksDone/g.totalTasks;
+        if(p>=1)            return {label:"COMPLETE",color:"#22AA44"};
+        if(timeRatio(g)>.85) return {label:"AT RISK", color:"#DD3333"};
+        if(timeRatio(g)>.6)  return {label:"WATCH",   color:"#E6A800"};
+        return                     {label:"ON TRACK", color:"#22AA44"};
+      };
+
+      // shorthand CSS var accessors
+      const v = name => `var(--${name})`;
+
+      return (
+        <div style={{minHeight:"100vh",background:v("bg"),fontFamily:"'Courier Prime','Courier New',monospace",color:v("txt"),transition:"background .3s,color .3s"}}>
+          <style>{`
+            .btn{cursor:pointer;border:none;transition:all .15s;font-family:'Courier Prime','Courier New',monospace;font-weight:700;letter-spacing:1px;}
+            .btn:hover:not(:disabled){opacity:.82;transform:scale(.98);}
+            .btn:active:not(:disabled){transform:scale(.95);}
+            .btn:disabled{cursor:not-allowed;}
+            .goal-card{transition:transform .2s,box-shadow .2s,background .3s,border-color .3s;}
+            .goal-card:hover{transform:translateY(-2px);box-shadow:0 6px 28px var(--shadow);}
+            .pbar{transition:width .6s cubic-bezier(.4,0,.2,1);}
+            .pip{transition:all .2s;}
+            @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+            @keyframes slideIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+            .card-enter{animation:slideIn .3s ease forwards;}
+            .modal-bg{position:fixed;inset:0;background:var(--modal-overlay);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(6px);}
+            input,select{background:var(--input-bg);border:1px solid var(--border3);color:var(--input-color);padding:10px 14px;font-family:'Courier Prime','Courier New',monospace;font-size:13px;width:100%;outline:none;transition:border .2s,background .3s;border-radius:0;}
+            input:focus,select:focus{border-color:#FF6B35;}
+            select option{background:var(--opt-bg);color:var(--input-color);}
+            input::placeholder{color:var(--txt4);}
+            .sbtn{background:transparent;border:1px solid var(--border2);color:var(--txt3);padding:6px 14px;font-size:11px;letter-spacing:1px;cursor:pointer;transition:all .15s;font-family:'Courier Prime','Courier New',monospace;}
+            .sbtn.on{border-color:#FF6B35;color:#FF6B35;}
+            .sbtn:hover{border-color:var(--txt3);color:var(--txt);}
+            .ferr{color:#DD3333;font-size:10px;margin-top:4px;letter-spacing:1px;}
+            .lbl{font-size:10px;color:var(--txt3);letter-spacing:2px;margin-bottom:6px;}
+
+            /* ── TOGGLE SWITCH ── */
+            .toggle-wrap{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;}
+            .toggle-track{width:44px;height:24px;border-radius:12px;position:relative;transition:background .25s;flex-shrink:0;}
+            .toggle-thumb{position:absolute;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .25s,box-shadow .25s;box-shadow:0 1px 4px rgba(0,0,0,.35);}
+            .toggle-icon{font-size:13px;transition:color .25s;}
+          `}</style>
+
+          {/* ── HEADER ── */}
+          <div style={{background:v("bg2"),borderBottom:`1px solid ${v("border")}`,padding:"18px 32px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,position:"sticky",top:0,zIndex:50,transition:"background .3s,border-color .3s"}}>
+            <div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:34,letterSpacing:5,color:v("txt"),lineHeight:1}}>GOAL COMMAND</div>
+              <div style={{fontSize:10,color:v("txt3"),letterSpacing:2,marginTop:4}}>{dateStr.toUpperCase()} · PERSONAL PROGRESS SYSTEM</div>
+            </div>
+
+            <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap"}}>
+              {/* Stats */}
+              <div style={{textAlign:"center"}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:38,color:"#FF6B35",lineHeight:1}}>{overallProgress}%</div>
+                <div style={{fontSize:10,color:v("txt3"),letterSpacing:2,marginTop:2}}>OVERALL</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:38,color:"#22AA44",lineHeight:1}}>{todayComplete}/{goals.length}</div>
+                <div style={{fontSize:10,color:v("txt3"),letterSpacing:2,marginTop:2}}>QUOTA MET</div>
+              </div>
+
+              {/* Buttons + toggle */}
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <button className="btn" onClick={openAdd} style={{background:"#FF6B35",color:"#fff",padding:"11px 20px",fontSize:12,letterSpacing:2}}>+ ADD GOAL</button>
+                <button className="btn" onClick={resetToday} style={{background:"transparent",border:`1px solid ${v("border2")}`,color:v("txt2"),padding:"11px 13px",fontSize:11,letterSpacing:1}} title="Reset today">↺ DAY</button>
+
+                {/* Theme toggle */}
+                <div className="toggle-wrap" onClick={()=>setDark(d=>!d)} title={dark?"Switch to Light":"Switch to Dark"}>
+                  <span className="toggle-icon" style={{color:dark?"#FFD700":v("txt4")}}>☀</span>
+                  <div className="toggle-track" style={{background:dark?"#2A2A2A":"#D0CEC9"}}>
+                    <div className="toggle-thumb" style={{left:dark?"3px":"23px",background:dark?"#E0E0E0":"#FF6B35"}}/>
+                  </div>
+                  <span className="toggle-icon" style={{color:dark?v("txt4"):"#334"}}> ☾</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── MASTER BAR ── */}
+          <div style={{background:v("bg3"),borderBottom:`1px solid ${v("border")}`,padding:"11px 32px",display:"flex",alignItems:"center",gap:16,transition:"background .3s"}}>
+            <div style={{fontSize:10,color:v("txt3"),letterSpacing:2,whiteSpace:"nowrap"}}>MASTER PROGRESS</div>
+            <div style={{flex:1,height:6,background:v("bg4"),position:"relative",overflow:"hidden"}}>
+              <div className="pbar" style={{position:"absolute",left:0,top:0,bottom:0,width:`${overallProgress}%`,background:"linear-gradient(90deg,#FF6B35,#E6A800)"}}/>
+            </div>
+            <div style={{fontSize:11,color:v("txt2"),whiteSpace:"nowrap"}}>{overallProgress}% COMPLETE</div>
+          </div>
+
+          {/* ── SORT ── */}
+          <div style={{padding:"14px 32px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <span style={{fontSize:10,color:v("txt4"),letterSpacing:2,marginRight:4}}>SORT BY:</span>
+            {["priority","progress","deadline"].map(s=>(
+              <button key={s} className={`sbtn ${sortBy===s?"on":""}`} onClick={()=>setSortBy(s)}>{s.toUpperCase()}</button>
+            ))}
+          </div>
+
+          {/* ── CARDS ── */}
+          <div style={{padding:"0 32px 48px",display:"grid",gap:14}}>
+            {sorted.map((g,i)=>{
+              const prog=Math.round((g.tasksDone/g.totalTasks)*100);
+              const status=getStatus(g);
+              const qMet=g.todayDone>=g.dailyQuota;
+              const pips=Array.from({length:Math.min(g.dailyQuota,20)});
+              const tr=timeRatio(g);
+              return (
+                <div key={g.id} className="goal-card card-enter"
+                  style={{background:v("bg2"),border:`1px solid ${v("border")}`,borderLeft:`3px solid ${g.color}`,padding:"20px 24px",animationDelay:`${i*.05}s`}}>
+
+                  {/* Top row */}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-start",marginBottom:14}}>
+                    <div style={{flex:1,minWidth:200}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,flexWrap:"wrap"}}>
+                        <div style={{fontFamily:"'Bebas Neue'",fontSize:24,color:v("txt"),letterSpacing:2}}>{g.name}</div>
+                        <div style={{fontSize:10,padding:"3px 9px",background:`${status.color}22`,border:`1px solid ${status.color}55`,color:status.color,letterSpacing:1}}>{status.label}</div>
+                      </div>
+                      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+                        <span style={{fontSize:10,color:priorityColors[g.priority],letterSpacing:1}}>● {g.priority.toUpperCase()} PRIORITY</span>
+                        <span style={{fontSize:10,color:v("txt3")}}>PITCHED: <span style={{color:v("txt2")}}>{g.timePitched}d</span></span>
+                        <span style={{fontSize:10,color:v("txt3")}}>GIVEN: <span style={{color:v("txt2")}}>{g.timeGiven}d</span></span>
+                        <span style={{fontSize:10,color:v("txt3")}}>REMAINING: <span style={{color:(g.timeGiven-g.timePitched)<=5?"#DD3333":v("txt2")}}>{Math.max(0,g.timeGiven-g.timePitched)}d</span></span>
+                      </div>
+                    </div>
+
+                    <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
+                      {[
+                        {val:`${prog}%`,             sub:"PROGRESS",     col:g.color},
+                        {val:g.tasksDone,  s2:`/${g.totalTasks}`, sub:"TASKS DONE",    col:v("txt")},
+                        {val:g.todayDone,  s2:`/${g.dailyQuota}`, sub:"TODAY'S QUOTA", col:qMet?"#22AA44":"#DD3333"},
+                      ].map((s,si)=>(
+                        <div key={si} style={{textAlign:"center"}}>
+                          <div style={{fontFamily:"'Bebas Neue'",fontSize:30,color:s.col,lineHeight:1}}>
+                            {s.val}{s.s2&&<span style={{fontSize:14,color:v("txt4")}}>{s.s2}</span>}
+                          </div>
+                          <div style={{fontSize:9,color:v("txt4"),letterSpacing:1}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{height:8,background:v("bg4"),position:"relative",overflow:"hidden",marginBottom:4}}>
+                      <div className="pbar" style={{position:"absolute",left:0,top:0,bottom:0,width:`${prog}%`,background:g.color,opacity:.9}}/>
+                      <div style={{position:"absolute",top:0,bottom:0,left:`${tr*100}%`,width:2,background:"var(--time-marker)"}} title="Time elapsed"/>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:v("txt5")}}>
+                      <span>0%</span><span>▲ TIME ELAPSED ({Math.round(tr*100)}%)</span><span>100%</span>
+                    </div>
+                  </div>
+
+                  {/* Quota pips */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+                    <span style={{fontSize:9,color:v("txt4"),letterSpacing:1}}>TODAY:</span>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      {pips.map((_,pi)=>(
+                        <div key={pi} className="pip"
+                          style={{width:22,height:22,border:`1px solid ${pi<g.todayDone?g.color:v("border2")}`,background:pi<g.todayDone?`${g.color}33`:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:pi<g.todayDone?g.color:v("txt5")}}>
+                          {pi<g.todayDone?"✓":"·"}
+                        </div>
+                      ))}
+                      {g.dailyQuota>20&&<span style={{fontSize:9,color:v("txt4")}}>+{g.dailyQuota-20} more</span>}
+                    </div>
+                    {qMet&&<span style={{fontSize:9,color:"#22AA44",letterSpacing:1,animation:"pulse 2s infinite"}}>QUOTA MET ✓</span>}
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button className="btn" onClick={()=>logTask(g.id)} disabled={g.tasksDone>=g.totalTasks}
+                      style={{background:g.tasksDone>=g.totalTasks?v("bg4"):g.color,color:g.tasksDone>=g.totalTasks?v("txt4"):"#fff",padding:"8px 20px",fontSize:11,letterSpacing:1}}>
+                      + LOG TASK
+                    </button>
+                    <button className="btn" onClick={()=>undoTask(g.id)} disabled={g.tasksDone===0}
+                      style={{background:"transparent",border:`1px solid ${v("border2")}`,color:g.tasksDone===0?v("txt5"):v("txt2"),padding:"8px 16px",fontSize:11,letterSpacing:1}}>
+                      UNDO
+                    </button>
+                    <button className="btn" onClick={()=>openEdit(g)}
+                      style={{background:"transparent",border:`1px solid ${v("border2")}`,color:v("txt2"),padding:"8px 16px",fontSize:11,letterSpacing:1,marginLeft:"auto"}}>
+                      EDIT
+                    </button>
+                    <button className="btn" onClick={()=>deleteGoal(g.id)}
+                      style={{background:"transparent",border:`1px solid ${v("border2")}`,color:"#DD3333",padding:"8px 16px",fontSize:11,letterSpacing:1}}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {goals.length===0&&(
+              <div style={{textAlign:"center",padding:"100px 0",color:v("txt5")}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:52,letterSpacing:6,marginBottom:12}}>NO GOALS SET</div>
+                <div style={{fontSize:12,letterSpacing:2}}>CLICK "+ ADD GOAL" TO BEGIN YOUR JOURNEY</div>
+              </div>
+            )}
+          </div>
+
+          {/* ── MODAL ── */}
+          {showModal&&(
+            <div className="modal-bg" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
+              <div style={{background:v("modal-bg"),border:`1px solid ${v("border2")}`,padding:32,width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto",transition:"background .3s"}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:30,letterSpacing:4,marginBottom:24,color:v("txt")}}>{editingGoal?"EDIT GOAL":"NEW GOAL"}</div>
+                <div style={{display:"grid",gap:16}}>
+
+                  <div>
+                    <div className="lbl">GOAL NAME</div>
+                    <input type="text" placeholder="e.g. Read 30 books" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
+                    {errors.name&&<div className="ferr">{errors.name}</div>}
+                  </div>
+
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    {[
+                      {lbl:"TIME PITCHED (days)",key:"timePitched",ph:"Days elapsed"},
+                      {lbl:"TIME GIVEN (days)",  key:"timeGiven",  ph:"Total days"},
+                      {lbl:"TOTAL TASKS",        key:"totalTasks", ph:"e.g. 30"},
+                      {lbl:"DAILY QUOTA",        key:"dailyQuota", ph:"Tasks/day"},
+                    ].map(f=>(
+                      <div key={f.key}>
+                        <div className="lbl">{f.lbl}</div>
+                        <input type="number" min="1" placeholder={f.ph} value={form[f.key]} onChange={e=>setForm({...form,[f.key]:e.target.value})}/>
+                        {errors[f.key]&&<div className="ferr">{errors[f.key]}</div>}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <div className="lbl">PRIORITY</div>
+                    <select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}>
+                      {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="lbl">ACCENT COLOR</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {ACCENT_PALETTE.map(c=>(
+                        <div key={c} onClick={()=>setForm({...form,color:c})}
+                          style={{width:34,height:34,background:c,cursor:"pointer",border:form.color===c?`3px solid ${v("txt")}`:"3px solid transparent",transition:"border .15s"}}/>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{display:"flex",gap:10,marginTop:28}}>
+                  <button className="btn" onClick={saveGoal} style={{flex:1,background:"#FF6B35",color:"#fff",padding:14,fontSize:12,letterSpacing:2}}>SAVE GOAL</button>
+                  <button className="btn" onClick={()=>setShowModal(false)} style={{background:"transparent",border:`1px solid ${v("border2")}`,color:v("txt2"),padding:"14px 20px",fontSize:12,letterSpacing:1}}>CANCEL</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
